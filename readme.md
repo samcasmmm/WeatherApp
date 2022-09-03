@@ -5,7 +5,6 @@ This is simple WeatherApp using using [https://openweathermap.org/api]
 ```
 https://api.openweathermap.org/data/2.5/weather?id={city id}&appid={API key}
 
-```U
 
 
 ## Some Screenshot
