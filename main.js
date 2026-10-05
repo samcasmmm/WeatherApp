@@ -1,7 +1,7 @@
 /**
  * AETHER WEATHER — Apple Weather Edition Engine
  * Precision meteorological telemetry with dynamic city backdrops,
- * hourly forecasts, and Apple-style 5-day temperature range bars.
+ * hourly forecasts, Apple-style 5-day temperature range bars, and interactive SVG gauges.
  */
 
 const CONFIG = {
@@ -134,6 +134,7 @@ async function fetchForecast(city) {
             state.forecastData = data;
             renderHourlyForecast(data.list.slice(0, 6));
             render5DayForecast(data.list);
+            renderMiniTempWave(data.list.slice(0, 8));
         }
     } catch (err) {
         console.error("Forecast fetch failed:", err);
@@ -146,7 +147,7 @@ function fetchCurrentLocationWeather() {
         return;
     }
 
-    showToast("Locating your coordinates...", "info");
+    showToast("Locating coordinates...", "info");
     showLoading(true);
 
     navigator.geolocation.getCurrentPosition(
@@ -321,44 +322,52 @@ function renderCurrentWeather(data) {
     if (sys.sunrise && sys.sunset) {
         document.getElementById("sunriseTime").textContent = formatEpochToCityTime(sys.sunrise, data.timezone);
         document.getElementById("sunsetTime").textContent = formatEpochToCityTime(sys.sunset, data.timezone);
-        updateSunsetDelta(sys.sunset, data.timezone);
+        updateSunArcDot(sys.sunrise, sys.sunset, data.timezone);
     }
 
     // Wind
     const windSpeedVal = isMetric ? Math.round(wind.speed * 3.6) : Math.round(wind.speed);
-    document.getElementById("windSpeed").innerHTML = `${windSpeedVal} <span class="text-xs font-normal text-white/70">${speedUnit}</span>`;
+    document.getElementById("windSpeed").innerHTML = `${windSpeedVal} <span class="text-xs font-normal text-white/60">${speedUnit}</span>`;
     const windDeg = wind.deg || 0;
     document.getElementById("windDirText").textContent = getWindCardinal(windDeg);
     document.getElementById("compassNeedle").style.transform = `rotate(${windDeg}deg)`;
     document.getElementById("windBeaufort").textContent = windSpeedVal < 12 ? "Light air" : windSpeedVal < 28 ? "Gentle breeze" : windSpeedVal < 40 ? "Moderate breeze" : "Strong wind";
-    document.getElementById("windGustText").textContent = `Direction: ${windDeg}° azimuth`;
+    document.getElementById("windGustText").textContent = `${windDeg}° azimuth`;
 
     // Humidity
     document.getElementById("humidityVal").textContent = `${main.humidity}%`;
-    document.getElementById("humidityBar").style.width = `${main.humidity}%`;
     const dewPoint = Math.round(main.temp - ((100 - main.humidity) / 5));
-    document.getElementById("dewPointVal").textContent = `The dew point is ${dewPoint}${tempUnit} right now.`;
+    document.getElementById("dewPointVal").textContent = `Dew: ${dewPoint}${tempUnit}`;
+    const ringEl = document.getElementById("humidityRingCircle");
+    if (ringEl) {
+        const pct = Math.max(0, Math.min(100, main.humidity));
+        ringEl.setAttribute("stroke-dasharray", `${pct}, 100`);
+    }
+    const humRating = document.getElementById("humidityRating");
+    if (humRating) {
+        humRating.textContent = main.humidity > 75 ? "High Humidity" : main.humidity < 35 ? "Dry Atmosphere" : "Comfortable Air";
+    }
 
     // Feels Like
     const feelsLikeVal = Math.round(main.feels_like);
     document.getElementById("feelsLikeVal").textContent = `${feelsLikeVal}°`;
     if (feelsLikeVal > Math.round(main.temp)) {
-        document.getElementById("feelsLikeDesc").textContent = "Humidity is making it feel warmer.";
+        document.getElementById("feelsLikeDesc").textContent = "Humidity makes it feel warmer.";
     } else if (feelsLikeVal < Math.round(main.temp)) {
-        document.getElementById("feelsLikeDesc").textContent = "Wind factor is making it feel cooler.";
+        document.getElementById("feelsLikeDesc").textContent = "Wind factor makes it feel cooler.";
     } else {
-        document.getElementById("feelsLikeDesc").textContent = "Similar to the actual temperature.";
+        document.getElementById("feelsLikeDesc").textContent = "Similar to actual temp.";
     }
     document.getElementById("comfortRating").textContent = evaluateComfort(main.temp, main.humidity, isMetric);
 
     // Visibility
     const visKm = visibility ? (visibility / 1000).toFixed(0) : 10;
     const visText = isMetric ? `${visKm} km` : `${(visKm * 0.621371).toFixed(0)} mi`;
-    document.getElementById("visibilityVal").textContent = visText;
-    document.getElementById("visibilityDesc").textContent = visibility >= 9000 ? "It's perfectly clear right now." : visibility >= 5000 ? "Moderate atmospheric haze." : "Reduced optical visibility.";
+    document.getElementById("visibilityVal").innerHTML = `${visText}`;
+    document.getElementById("visibilityDesc").textContent = visibility >= 9000 ? "Perfect atmospheric clarity." : visibility >= 5000 ? "Moderate optical haze." : "Reduced optical visibility.";
 
     // Pressure
-    document.getElementById("pressureVal").innerHTML = `${main.pressure} <span class="text-xs font-normal text-white/70">hPa</span>`;
+    document.getElementById("pressureVal").innerHTML = `${main.pressure} <span class="text-[10px] font-normal text-white/60">hPa</span>`;
 
     setWeatherParticleState(cond.main);
 }
@@ -377,10 +386,10 @@ function renderHourlyForecast(hourlyList) {
         const iconHtml = getLuminousWeatherIcon(item.weather[0].icon, item.weather[0].main);
 
         return `
-            <div class="flex flex-col items-center justify-between py-1">
-                <span class="text-[10px] text-white/70 font-medium">${timeLabel}</span>
-                <div class="my-1.5 text-sm">${iconHtml}</div>
-                <span class="text-xs font-semibold text-white">${temp}°</span>
+            <div class="flex flex-col items-center justify-between py-0.5">
+                <span class="text-[9px] text-white/70 font-medium">${timeLabel}</span>
+                <div class="my-1 text-xs">${iconHtml}</div>
+                <span class="text-[11px] font-semibold text-white">${temp}°</span>
             </div>
         `;
     }).join("");
@@ -393,7 +402,6 @@ function render5DayForecast(fullList) {
     const container = document.getElementById("dailyForecastList");
     if (!container || !fullList) return;
 
-    // Group by Day
     const dayGroups = {};
     fullList.forEach(item => {
         const date = new Date((item.dt + state.timezoneOffset) * 1000);
@@ -404,7 +412,6 @@ function render5DayForecast(fullList) {
 
     const dailyDays = Object.keys(dayGroups).slice(0, 5);
 
-    // Global Min & Max for relative range bar widths
     let globalMin = Infinity;
     let globalMax = -Infinity;
     dailyDays.forEach(day => {
@@ -430,26 +437,86 @@ function render5DayForecast(fullList) {
         const midItem = items[Math.floor(items.length / 2)] || items[0];
         const iconHtml = getLuminousWeatherIcon(midItem.weather[0].icon, midItem.weather[0].main);
 
-        // Apple Weather Range Bar Calculations
         const leftPercent = Math.max(0, Math.min(100, Math.round(((min - globalMin) / totalRange) * 100)));
         const barWidth = Math.max(18, Math.min(100 - leftPercent, Math.round(((max - min) / totalRange) * 100)));
 
         return `
-            <div class="flex items-center justify-between text-xs py-1 border-b border-white/5 last:border-none">
-                <span class="w-12 text-white/90 font-medium">${dayName}</span>
-                <div class="w-7 flex items-center justify-center text-sm">${iconHtml}</div>
-                <span class="w-8 text-right text-white/60 font-medium">${min}°</span>
-                <div class="flex-1 mx-3 bg-black/25 rounded-full h-1 relative overflow-hidden">
+            <div class="flex items-center justify-between text-xs py-0.5 border-b border-white/5 last:border-none">
+                <span class="w-12 text-white/90 font-medium text-[11px]">${dayName}</span>
+                <div class="w-6 flex items-center justify-center text-xs">${iconHtml}</div>
+                <span class="w-7 text-right text-white/60 font-medium text-[10px]">${min}°</span>
+                <div class="flex-1 mx-2 bg-black/25 rounded-full h-1 relative overflow-hidden">
                     <div class="absolute h-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-orange-400" style="left: ${leftPercent}%; width: ${barWidth}%;"></div>
                 </div>
-                <span class="w-8 text-left text-white font-semibold">${max}°</span>
+                <span class="w-7 text-left text-white font-semibold text-[10px]">${max}°</span>
             </div>
         `;
     }).join("");
 }
 
 // -------------------------------------------------------------
-// LOCAL TIME CLOCK & SUNSET DELTA
+// 24-HOUR MINI TEMPERATURE WAVE CURVE (Eliminates empty space)
+// -------------------------------------------------------------
+function renderMiniTempWave(hourlyList) {
+    const svg = document.getElementById("miniTempWaveSvg");
+    if (!svg || !hourlyList || hourlyList.length === 0) return;
+
+    const temps = hourlyList.map(h => h.main.temp);
+    const minTemp = Math.min(...temps);
+    const maxTemp = Math.max(...temps);
+    const range = (maxTemp - minTemp) || 1;
+
+    const peakLabel = document.getElementById("curvePeakLabel");
+    if (peakLabel) {
+        peakLabel.textContent = `High: ${Math.round(maxTemp)}° • Low: ${Math.round(minTemp)}°`;
+    }
+
+    const width = 320;
+    const height = 48;
+    const topPad = 12;
+    const bottomPad = 10;
+    const graphH = height - topPad - bottomPad;
+
+    const points = hourlyList.map((item, index) => {
+        const x = (index / (hourlyList.length - 1)) * (width - 24) + 12;
+        const normalizedY = 1 - ((item.main.temp - minTemp) / range);
+        const y = topPad + (normalizedY * graphH);
+        return { x, y, temp: Math.round(item.main.temp) };
+    });
+
+    let dPath = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+        const p0 = points[i];
+        const p1 = points[i + 1];
+        const cpX = (p0.x + p1.x) / 2;
+        dPath += ` C ${cpX} ${p0.y}, ${cpX} ${p1.y}, ${p1.x} ${p1.y}`;
+    }
+
+    const dArea = `${dPath} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
+
+    let svgHtml = `
+        <defs>
+            <linearGradient id="miniCurveGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.4"/>
+                <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.0"/>
+            </linearGradient>
+        </defs>
+        <path d="${dArea}" fill="url(#miniCurveGrad)" />
+        <path d="${dPath}" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" />
+    `;
+
+    points.forEach((p, idx) => {
+        svgHtml += `
+            <circle cx="${p.x}" cy="${p.y}" r="2" fill="#38bdf8" stroke="#ffffff" stroke-width="1" />
+            <text x="${p.x}" y="${p.y - 4}" text-anchor="middle" font-size="8" font-family="-apple-system, sans-serif" font-weight="bold" fill="#ffffff">${p.temp}°</text>
+        `;
+    });
+
+    svg.innerHTML = svgHtml;
+}
+
+// -------------------------------------------------------------
+// LOCAL TIME CLOCK & SUN ARC POSITION
 // -------------------------------------------------------------
 function startLocalClock() {
     if (state.localTimeTimer) clearInterval(state.localTimeTimer);
@@ -477,7 +544,7 @@ function startLocalClock() {
         }
 
         if (state.currentData?.sys) {
-            updateSunsetDelta(state.currentData.sys.sunset, state.timezoneOffset);
+            updateSunArcDot(state.currentData.sys.sunrise, state.currentData.sys.sunset, state.timezoneOffset);
         }
     }
 
@@ -485,16 +552,45 @@ function startLocalClock() {
     state.localTimeTimer = setInterval(tick, 1000);
 }
 
-function updateSunsetDelta(sunset, timezoneOffset) {
+function updateSunArcDot(sunrise, sunset, timezoneOffset) {
     const label = document.getElementById("daylightStatus");
-    if (!label || !sunset) return;
+    const dot = document.getElementById("sunPosDot");
+    if (!sunrise || !sunset) return;
 
     const now = Math.floor(Date.now() / 1000);
-    if (now < sunset) {
-        const diffHrs = ((sunset - now) / 3600).toFixed(1);
-        label.textContent = `Sunset in approx ${diffHrs} hours`;
+    const totalDaylight = sunset - sunrise;
+    
+    if (now < sunrise) {
+        const diffHrs = ((sunrise - now) / 3600).toFixed(1);
+        if (label) label.textContent = `Sunrise in approx ${diffHrs} hours`;
+        if (dot) {
+            dot.setAttribute("cx", "15");
+            dot.setAttribute("cy", "45");
+            dot.setAttribute("fill", "#94a3b8");
+        }
+    } else if (now > sunset) {
+        if (label) label.textContent = `Sun has set for today`;
+        if (dot) {
+            dot.setAttribute("cx", "145");
+            dot.setAttribute("cy", "45");
+            dot.setAttribute("fill", "#94a3b8");
+        }
     } else {
-        label.textContent = `Sun has set for today`;
+        const elapsed = now - sunrise;
+        const pct = Math.max(0, Math.min(1, elapsed / totalDaylight));
+        const remHrs = ((sunset - now) / 3600).toFixed(1);
+        if (label) label.textContent = `Sunset in approx ${remHrs} hours`;
+
+        if (dot) {
+            // Quadratic bezier calculation: P(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
+            // P0=(15, 45), P1=(80, 5), P2=(145, 45)
+            const t = pct;
+            const cx = Math.round((1 - t) * (1 - t) * 15 + 2 * (1 - t) * t * 80 + t * t * 145);
+            const cy = Math.round((1 - t) * (1 - t) * 45 + 2 * (1 - t) * t * 5 + t * t * 45);
+            dot.setAttribute("cx", cx.toString());
+            dot.setAttribute("cy", cy.toString());
+            dot.setAttribute("fill", "#fbbf24");
+        }
     }
 }
 
